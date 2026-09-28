@@ -23,6 +23,15 @@ def test_health_reports_ready_service(tmp_path) -> None:
     assert response.json() == {"status": "ok", "version": "0.1.0"}
 
 
+def test_tauri_origin_is_allowed_for_local_api(tmp_path) -> None:
+    client = TestClient(create_app(store=_store(tmp_path)))
+
+    response = client.get("/api/health", headers={"Origin": "http://tauri.localhost"})
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://tauri.localhost"
+
+
 def test_get_config_redacts_api_key(tmp_path) -> None:
     client = TestClient(create_app(store=_store(tmp_path, api_key="secret")))
 

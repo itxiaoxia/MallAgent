@@ -6,12 +6,15 @@ __pycache__/
 .ruff_cache/
 backend/.pytest_cache/
 backend/build/
+backend/build-*/
+backend/build-spec/
 backend/dist/
 backend/*.egg-info/
 dist/
 node_modules/
 src-tauri/target/
 src-tauri/binaries/
+src-tauri/resources/
 .superpowers/
 .env
 config.json

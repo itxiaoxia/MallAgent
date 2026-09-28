@@ -5,6 +5,7 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -63,6 +64,14 @@ def create_app(
     run = agent_runner or run_agent
     test_mcp = mcp_tester or discover_mcp_tools
     app = FastAPI(title="MallAgent Backend", version="0.1.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:1420", "http://127.0.0.1:1420", "tauri://localhost", "http://tauri.localhost"],
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(_, exc: RequestValidationError) -> JSONResponse:
