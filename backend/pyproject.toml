@@ -28,3 +28,6 @@ pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
 asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+  "ignore::langchain_core._api.beta_decorator.LangChainBetaWarning",
+]
