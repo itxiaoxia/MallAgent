@@ -8,6 +8,8 @@ export interface ModelConfig {
   model: string;
   temperature: number;
   max_tokens: number | null;
+  timeout: number;
+  retry_count: number;
 }
 
 export interface McpServerConfig {
@@ -31,11 +33,42 @@ export interface AppConfig {
 export interface ChatMessage {
   role: ChatRole;
   content: string;
+  reasoning?: string;
 }
 
 export interface ChatResponse {
   content: string;
   tool_calls: string[];
+}
+
+export interface ConversationResponse {
+  conversation_id: string;
+  messages: ChatMessage[];
+}
+
+export interface ConversationSummary {
+  conversation_id: string;
+  title: string;
+  updated_at: string;
+}
+
+export interface ConversationListResponse {
+  conversations: ConversationSummary[];
+}
+
+export type ChatStreamEventType =
+  | "start"
+  | "reasoning_delta"
+  | "content_delta"
+  | "tool_call"
+  | "self_heal"
+  | "retry"
+  | "done"
+  | "error";
+
+export interface ChatStreamEvent {
+  type: ChatStreamEventType;
+  [key: string]: unknown;
 }
 
 export interface McpTool {
@@ -51,4 +84,9 @@ export interface HealthResponse {
 export interface McpTestResponse {
   server_id: string;
   tools: McpTool[];
+}
+
+export interface ModelTestResponse {
+  status: "ok";
+  model: string;
 }

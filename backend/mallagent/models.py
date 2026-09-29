@@ -14,8 +14,21 @@ class ModelConfig(BaseModel):
     base_url: str = "https://api.openai.com/v1"
     api_key: str = ""
     model: str = "gpt-4o-mini"
-    temperature: float = Field(default=0.2, ge=0, le=2)
+    temperature: float = Field(default=0.2, ge=0, lt=2)
     max_tokens: int | None = Field(default=None, ge=1)
+    timeout: float = Field(default=60, ge=1, le=3600)
+    retry_count: int = Field(default=2, ge=0, le=10)
+
+    @field_validator("temperature", mode="before")
+    @classmethod
+    def migrate_legacy_temperature(cls, value: object) -> object:
+        """Keep existing configs using the old inclusive upper bound loadable."""
+        try:
+            if float(value) == 2:
+                return 1.9
+        except (TypeError, ValueError):
+            pass
+        return value
 
     @field_validator("base_url")
     @classmethod

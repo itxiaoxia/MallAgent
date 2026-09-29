@@ -16,6 +16,7 @@ src-tauri/target/
 src-tauri/binaries/
 src-tauri/resources/
 .superpowers/
+/AGENTS.md
 .env
 config.json
 *.log

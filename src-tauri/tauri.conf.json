@@ -40,7 +40,7 @@
       "icons/icon.icns"
     ],
     "resources": {
-      "resources/mallagent-backend.exe": "backend/mallagent-backend.exe"
+      "resources/backend/": "backend/"
     }
   }
 }

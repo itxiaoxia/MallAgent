@@ -10,8 +10,10 @@
     "test": "vitest run",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "npm run build:backend && tauri build",
-    "build:backend": "powershell -ExecutionPolicy Bypass -File scripts/build-backend.ps1"
+    "tauri:build": "node scripts/build-desktop.mjs",
+    "build:backend": "node scripts/build-desktop.mjs --backend-only",
+    "build:windows": "scripts\\build.bat",
+    "build:macos": "sh ./scripts/build.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
