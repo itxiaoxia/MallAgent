@@ -23,10 +23,10 @@ interface ModelTestState {
 
 const initialConfig: AppConfig = {
   model: {
-    base_url: "https://api.openai.com/v1",
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     api_key: "",
     api_key_configured: false,
-    model: "gpt-4o-mini",
+    model: "qwen3.8-max",
     temperature: 0.2,
     max_tokens: null,
     timeout: 60,
@@ -35,6 +35,8 @@ const initialConfig: AppConfig = {
   default_prompt: "",
   mcp_servers: [],
 };
+
+const MCP_AUTO_CONNECT_OPTIONS = { attempts: 3, delayMs: 200 };
 
 function newServer(): McpServerConfig {
   return {
@@ -81,6 +83,7 @@ function App() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationLoading, setConversationLoading] = useState(false);
   const modelConnectionRunRef = useRef(0);
+  const mcpConnectionRunRef = useRef(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -95,6 +98,20 @@ function App() {
   const [mcpTestResults, setMcpTestResults] = useState<Record<string, McpTestState>>({});
   const [apiModalServerId, setApiModalServerId] = useState<string | null>(null);
   const [modelTest, setModelTest] = useState<ModelTestState>({ status: "idle", message: "未测试" });
+
+  async function autoConnectMcp(servers: McpServerConfig[], api: ApiClient) {
+    const connectionRun = ++mcpConnectionRunRef.current;
+    const enabledServers = servers.filter((server) => server.enabled);
+    setMcpTestResults(Object.fromEntries(
+      enabledServers.map((server) => [server.id, {
+        status: "testing",
+        message: "连接中…",
+        tools: [],
+      }]),
+    ));
+    const results = await autoConnectMcpServers(servers, api.testMcp, MCP_AUTO_CONNECT_OPTIONS);
+    if (mcpConnectionRunRef.current === connectionRun) setMcpTestResults(results);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -154,19 +171,10 @@ function App() {
       setModelTest({ status: "idle", message: "未配置" });
     }
 
-    const configuredServers = config.mcp_servers.filter((server) => server.enabled);
-    setMcpTestResults(Object.fromEntries(
-      configuredServers.map((server) => [server.id, {
-        status: "testing",
-        message: "启动时连接中…",
-        tools: [],
-      }]),
-    ));
-    void autoConnectMcpServers(config.mcp_servers, client.testMcp).then((results) => {
-      if (!cancelled) setMcpTestResults(results);
-    });
+    void autoConnectMcp(config.mcp_servers, client);
     return () => {
       cancelled = true;
+      mcpConnectionRunRef.current += 1;
     };
   }, [client]);
 
@@ -200,6 +208,7 @@ function App() {
   }
 
   function updateServer(id: string, patch: Partial<McpServerConfig>) {
+    mcpConnectionRunRef.current += 1;
     setConfig((current) => ({
       ...current,
       mcp_servers: current.mcp_servers.map((server) => (server.id === id ? { ...server, ...patch } : server)),
@@ -243,6 +252,7 @@ function App() {
   async function saveSettings() {
     if (!client) return;
     const shouldTestModel = view === "model";
+    const shouldTestMcp = view === "mcp";
     if (shouldTestModel) modelConnectionRunRef.current += 1;
     setSaving(true);
     setError("");
@@ -259,6 +269,9 @@ function App() {
         } else {
           setError("设置已保存，但模型连接测试未通过，请检查模型配置。\n");
         }
+      } else if (shouldTestMcp) {
+        await autoConnectMcp(saved.mcp_servers, client);
+        setNotice("设置已保存，MCP 已自动尝试连接。\n");
       } else {
         setNotice("设置已保存，新会话会立即使用当前默认提示词。\n");
       }
@@ -368,6 +381,7 @@ function App() {
   }
 
   async function testMcp(server: McpServerConfig) {
+    const connectionRun = ++mcpConnectionRunRef.current;
     if (!client || !connected) {
       setMcpTestResults((current) => ({
         ...current,
@@ -381,11 +395,13 @@ function App() {
     }));
     try {
       const response = await client.testMcp(server);
+      if (mcpConnectionRunRef.current !== connectionRun) return;
       setMcpTestResults((current) => ({
         ...current,
         [server.id]: mcpTestStateFromResponse(response),
       }));
     } catch (testError) {
+      if (mcpConnectionRunRef.current !== connectionRun) return;
       setMcpTestResults((current) => ({
         ...current,
         [server.id]: { status: "error", message: formatApiError(testError), tools: [] },
@@ -602,8 +618,8 @@ function App() {
               <section className="settings-card">
                 <div className="section-heading"><div><span className="card-kicker">MODEL PROVIDER</span><h2>OpenAI-compatible 模型</h2></div><span className="section-number">01</span></div>
                 <div className="form-grid">
-                  <label className="field full"><span>Base URL</span><input value={config.model.base_url} onChange={(event) => updateModel("base_url", event.target.value)} placeholder="https://api.openai.com/v1" /></label>
-                  <label className="field"><span>模型名称</span><input value={config.model.model} onChange={(event) => updateModel("model", event.target.value)} placeholder="gpt-4o-mini" /></label>
+                  <label className="field full"><span>Base URL</span><input value={config.model.base_url} onChange={(event) => updateModel("base_url", event.target.value)} placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" /></label>
+                  <label className="field"><span>模型名称</span><input value={config.model.model} onChange={(event) => updateModel("model", event.target.value)} placeholder="qwen3.8-max" /></label>
                   <label className="field"><span>Temperature <em>{config.model.temperature}</em></span><input type="range" min="0" max="1.9" step="0.1" value={config.model.temperature} onChange={(event) => updateModel("temperature", Number(event.target.value))} /><small>模型温度，范围 0–1.9</small></label>
                   <label className="field"><span>超时（秒）</span><input type="number" min="1" max="3600" step="1" value={config.model.timeout} onChange={(event) => updateModel("timeout", Number(event.target.value))} /></label>
                   <label className="field"><span>重试次数</span><input type="number" min="0" max="10" step="1" value={config.model.retry_count} onChange={(event) => updateModel("retry_count", Number(event.target.value))} /></label>
@@ -638,14 +654,14 @@ function App() {
                     const resultClass = result?.status === "success" ? "test-result success" : result?.status === "error" ? "test-result error" : "test-result";
                     return (
                       <div className="mcp-editor" key={server.id}>
-                        <div className="mcp-editor-head"><input className="mcp-name" value={server.name} onChange={(event) => updateServer(server.id, { name: event.target.value })} /><label className="toggle"><input type="checkbox" checked={server.enabled} onChange={(event) => updateServer(server.id, { enabled: event.target.checked })} /><span /></label><button className="icon-button" onClick={() => { setConfig((current) => ({ ...current, mcp_servers: current.mcp_servers.filter((item) => item.id !== server.id) })); setMcpTestResults((current) => { const next = { ...current }; delete next[server.id]; return next; }); setApiModalServerId((current) => current === server.id ? null : current); }} title="删除">×</button></div>
+                        <div className="mcp-editor-head"><input className="mcp-name" value={server.name} onChange={(event) => updateServer(server.id, { name: event.target.value })} /><label className="toggle"><input type="checkbox" checked={server.enabled} onChange={(event) => updateServer(server.id, { enabled: event.target.checked })} /><span /></label><button className="icon-button" onClick={() => { mcpConnectionRunRef.current += 1; setConfig((current) => ({ ...current, mcp_servers: current.mcp_servers.filter((item) => item.id !== server.id) })); setMcpTestResults((current) => { const next = { ...current }; delete next[server.id]; return next; }); setApiModalServerId((current) => current === server.id ? null : current); }} title="删除">×</button></div>
                         <div className="mcp-fields"><label className="field"><span>协议</span><select value={server.transport} onChange={(event) => updateServer(server.id, { transport: event.target.value as McpServerConfig["transport"] })}><option value="stdio">stdio</option><option value="http">Streamable HTTP</option></select></label>{server.transport === "stdio" ? <><label className="field"><span>启动命令</span><input value={server.command} onChange={(event) => updateServer(server.id, { command: event.target.value })} placeholder="python" /></label><label className="field full"><span>参数（每行一个）</span><textarea value={server.args.join("\n")} onChange={(event) => updateServer(server.id, { args: event.target.value.split("\n").filter(Boolean) })} rows={2} placeholder="path/to/server.py" /></label><label className="field full"><span>环境变量 JSON</span><textarea value={JSON.stringify(server.env, null, 2)} onChange={(event) => { const parsed = parseStringMap(event.target.value); if (parsed) updateServer(server.id, { env: parsed }); }} rows={2} /></label></> : <><label className="field full"><span>服务 URL</span><input value={server.url} onChange={(event) => updateServer(server.id, { url: event.target.value })} placeholder="https://example.com/mcp" /></label><label className="field full"><span>请求头 JSON</span><textarea value={JSON.stringify(server.headers, null, 2)} onChange={(event) => { const parsed = parseStringMap(event.target.value); if (parsed) updateServer(server.id, { headers: parsed }); }} rows={2} /></label></>}</div>
                         <div className="mcp-footer"><button className="small-button" onClick={() => void testMcp(server)} disabled={!server.enabled || !client || !connected || result?.status === "testing"}>{result?.status === "testing" ? "连接中…" : "测试连接"}</button><span className={resultClass}>{result?.message || (!connected ? "服务未就绪" : "未测试")}</span>{result?.status === "success" && <button type="button" className="api-info-button" onClick={() => setApiModalServerId(server.id)} title="查看 API 列表" aria-label={`查看 ${server.name} 的 API 列表`}><span className="api-info-icon">i</span><span>{result.tools.length}</span></button>}</div>
                       </div>
                     );
                   })}
                 </div>
-                <button className="add-server" onClick={() => setConfig((current) => ({ ...current, mcp_servers: [...current.mcp_servers, newServer()] }))}>＋ 添加 MCP 服务</button>
+                <button className="add-server" onClick={() => { mcpConnectionRunRef.current += 1; setConfig((current) => ({ ...current, mcp_servers: [...current.mcp_servers, newServer()] })); }}>＋ 添加 MCP 服务</button>
               </section>
               <button className="primary-button save-button" onClick={() => void saveSettings()} disabled={saving}>{saving ? "保存中…" : "保存 MCP 设置"}<span>→</span></button>
             </div>

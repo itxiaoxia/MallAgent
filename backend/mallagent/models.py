@@ -11,9 +11,9 @@ class ModelConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    base_url: str = "https://api.openai.com/v1"
+    base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     api_key: str = ""
-    model: str = "gpt-4o-mini"
+    model: str = "qwen3.8-max"
     temperature: float = Field(default=0.2, ge=0, lt=2)
     max_tokens: int | None = Field(default=None, ge=1)
     timeout: float = Field(default=60, ge=1, le=3600)
