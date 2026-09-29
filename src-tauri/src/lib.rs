@@ -198,9 +198,15 @@ mod tests {
             40123,
         );
 
-        assert!(spec
-            .program
-            .ends_with("resources/backend/mallagent-backend.exe"));
+        let executable = if cfg!(windows) {
+            "mallagent-backend.exe"
+        } else {
+            "mallagent-backend"
+        };
+        assert_eq!(
+            spec.program,
+            Path::new("C:/resources").join("backend").join(executable)
+        );
         assert_eq!(
             spec.args,
             ["--host", "127.0.0.1", "--port", "40123"]

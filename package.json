@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
+    "tauri:dev": "node scripts/tauri-dev.mjs",
     "tauri:build": "node scripts/build-desktop.mjs",
     "build:backend": "node scripts/build-desktop.mjs --backend-only",
     "build:windows": "scripts\\build.bat",
