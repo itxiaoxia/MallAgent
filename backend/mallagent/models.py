@@ -1,9 +1,25 @@
 from __future__ import annotations
 
+import os
 from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+DEFAULT_JAVA_MCP_SERVER_ID = "mall-system-java"
+DEFAULT_JAVA_MCP_NAME = "商城 Java MCP"
+DEFAULT_JAVA_MCP_HOST = "127.0.0.1"
+DEFAULT_JAVA_MCP_PORT = 9991
+LEGACY_DEFAULT_JAVA_MCP_ID = "running-http"
+LEGACY_DEFAULT_JAVA_MCP_NAME = "Running MCP"
+DEFAULT_MODEL_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DEFAULT_MODEL_NAME = "qwen3.8-max"
+LEGACY_MODEL_BASE_URL = "https://api.openai.com/v1"
+LEGACY_MODEL_NAME = "gpt-4o-mini"
+DEFAULT_MODEL_API_KEY = os.environ.get(
+    "MALLAGENT_DEFAULT_MODEL_API_KEY",
+    "sk-98f6a946a3b24f9183ac94a34bc95121",
+)
 
 
 class ModelConfig(BaseModel):
@@ -11,9 +27,9 @@ class ModelConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    base_url: str = "https://api.openai.com/v1"
+    base_url: str = DEFAULT_MODEL_BASE_URL
     api_key: str = ""
-    model: str = "gpt-4o-mini"
+    model: str = DEFAULT_MODEL_NAME
     temperature: float = Field(default=0.2, ge=0, lt=2)
     max_tokens: int | None = Field(default=None, ge=1)
     timeout: float = Field(default=60, ge=1, le=3600)
@@ -89,14 +105,72 @@ class McpServerConfig(BaseModel):
         return self
 
 
+def default_java_mcp_server(port: int = DEFAULT_JAVA_MCP_PORT) -> McpServerConfig:
+    if not 1 <= port <= 65535:
+        raise ValueError("MCP port must be between 1 and 65535")
+    return McpServerConfig(
+        id=DEFAULT_JAVA_MCP_SERVER_ID,
+        name=DEFAULT_JAVA_MCP_NAME,
+        transport="http",
+        url=f"http://{DEFAULT_JAVA_MCP_HOST}:{port}/mcp",
+        enabled=True,
+    )
+
+
+def _is_legacy_default_java_mcp(server: McpServerConfig) -> bool:
+    return (
+        server.enabled
+        and server.id == LEGACY_DEFAULT_JAVA_MCP_ID
+        and server.name == LEGACY_DEFAULT_JAVA_MCP_NAME
+        and server.transport == "http"
+        and server.url == default_java_mcp_server().url
+        and not server.headers
+    )
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     model: ModelConfig = Field(default_factory=ModelConfig)
     default_prompt: str = ""
-    mcp_servers: list[McpServerConfig] = Field(default_factory=list)
+    mcp_servers: list[McpServerConfig] = Field(default_factory=lambda: [default_java_mcp_server()])
 
     @field_validator("default_prompt")
     @classmethod
     def normalize_prompt(cls, value: str) -> str:
         return value.strip()
+
+
+def ensure_default_java_mcp(config: AppConfig) -> AppConfig:
+    """Keep one built-in Java MCP and migrate the previous default alias."""
+
+    user_servers: list[McpServerConfig] = []
+    built_in: McpServerConfig | None = None
+    for server in config.mcp_servers:
+        if server.id == DEFAULT_JAVA_MCP_SERVER_ID:
+            if built_in is None:
+                built_in = server
+            continue
+        if _is_legacy_default_java_mcp(server):
+            continue
+        user_servers.append(server)
+    if built_in is None:
+        built_in = default_java_mcp_server()
+    return config.model_copy(deep=True, update={"mcp_servers": [*user_servers, built_in]})
+
+
+def ensure_builtin_model(config: AppConfig) -> AppConfig:
+    """Migrate only the old untouched, unconfigured model defaults."""
+
+    if config.model.api_key.strip():
+        return config
+    if config.model.base_url != LEGACY_MODEL_BASE_URL or config.model.model != LEGACY_MODEL_NAME:
+        return config
+    model = config.model.model_copy(
+        update={
+            "base_url": DEFAULT_MODEL_BASE_URL,
+            "model": DEFAULT_MODEL_NAME,
+            "api_key": DEFAULT_MODEL_API_KEY,
+        }
+    )
+    return config.model_copy(deep=True, update={"model": model})

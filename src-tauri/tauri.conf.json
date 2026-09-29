@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.mallagent.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run dev:desktop",
     "beforeBuildCommand": "npm run build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
@@ -40,7 +40,9 @@
       "icons/icon.icns"
     ],
     "resources": {
-      "resources/backend/": "backend/"
+      "resources/backend/": "backend/",
+      "resources/java/": "java/",
+      "resources/java-runtime/": "java-runtime/"
     }
   }
 }

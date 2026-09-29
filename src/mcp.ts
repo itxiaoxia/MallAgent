@@ -10,6 +10,11 @@ export interface McpTestState {
 
 type McpTestRunner = (server: McpServerConfig) => Promise<McpTestResponse>;
 
+export interface AutoConnectOptions {
+  attempts?: number;
+  delayMs?: number;
+}
+
 export function mcpTestStateFromResponse(response: McpTestResponse): McpTestState {
   return {
     status: "success",
@@ -26,15 +31,35 @@ export function mcpTestStateFromError(error: unknown): McpTestState {
   };
 }
 
+async function testWithRetry(
+  server: McpServerConfig,
+  testServer: McpTestRunner,
+  { attempts = 1, delayMs = 0 }: AutoConnectOptions,
+) {
+  const maxAttempts = Math.max(1, Math.floor(attempts));
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await testServer(server);
+    } catch (error) {
+      lastError = error;
+      if (attempt === maxAttempts) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.max(0, delayMs)));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("MCP 连接失败，请重试。");
+}
+
 export async function autoConnectMcpServers(
   servers: McpServerConfig[],
   testServer: McpTestRunner,
+  options: AutoConnectOptions = {},
 ): Promise<Record<string, McpTestState>> {
   const enabledServers = servers.filter((server) => server.enabled);
   const entries = await Promise.all(
     enabledServers.map(async (server) => {
       try {
-        return [server.id, mcpTestStateFromResponse(await testServer(server))] as const;
+        return [server.id, mcpTestStateFromResponse(await testWithRetry(server, testServer, options))] as const;
       } catch (error) {
         return [server.id, mcpTestStateFromError(error)] as const;
       }

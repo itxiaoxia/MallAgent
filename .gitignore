@@ -16,6 +16,10 @@ src-tauri/target/
 src-tauri/binaries/
 src-tauri/resources/
 .superpowers/
+/MallAgent-windows/
+/MallAgent-macos/
+/MallAgent-windows-*/
+/MallAgent-macos-*/
 /AGENTS.md
 .env
 config.json

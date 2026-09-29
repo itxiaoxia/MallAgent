@@ -7,19 +7,174 @@ import pytest
 from pydantic import ValidationError
 
 from mallagent.config import ConversationConflictError, ConfigStore, merge_config_update, public_config
-from mallagent.models import AppConfig, ModelConfig, McpServerConfig
+from mallagent.models import (
+    DEFAULT_MODEL_API_KEY,
+    DEFAULT_MODEL_BASE_URL,
+    DEFAULT_MODEL_NAME,
+    LEGACY_MODEL_BASE_URL,
+    LEGACY_MODEL_NAME,
+    DEFAULT_JAVA_MCP_PORT,
+    DEFAULT_JAVA_MCP_SERVER_ID,
+    AppConfig,
+    ModelConfig,
+    McpServerConfig,
+    default_java_mcp_server,
+)
 
 
-def test_default_config_has_openai_defaults() -> None:
+def test_default_config_has_builtin_model_defaults() -> None:
     config = AppConfig()
 
-    assert config.model.base_url == "https://api.openai.com/v1"
-    assert config.model.model == "gpt-4o-mini"
+    assert config.model.base_url == DEFAULT_MODEL_BASE_URL
+    assert config.model.model == DEFAULT_MODEL_NAME
+    assert config.model.api_key == ""
     assert config.model.temperature == 0.2
     assert config.model.timeout == 60
     assert config.model.retry_count == 2
     assert config.default_prompt == ""
-    assert config.mcp_servers == []
+    assert len(config.mcp_servers) == 1
+
+
+def test_empty_store_persists_builtin_model_and_java_defaults(tmp_path) -> None:
+    path = tmp_path / "config.db"
+    store = ConfigStore(path)
+
+    loaded = store.load()
+
+    assert path.exists()
+    assert loaded.model.base_url == DEFAULT_MODEL_BASE_URL
+    assert loaded.model.model == DEFAULT_MODEL_NAME
+    assert loaded.model.api_key == DEFAULT_MODEL_API_KEY
+    assert loaded.mcp_servers == [default_java_mcp_server()]
+
+
+def test_default_config_contains_java_mcp() -> None:
+    config = AppConfig()
+
+    assert config.mcp_servers == [default_java_mcp_server()]
+    server = config.mcp_servers[0]
+    assert server.id == DEFAULT_JAVA_MCP_SERVER_ID == "mall-system-java"
+    assert server.name == "商城 Java MCP"
+    assert server.transport == "http"
+    assert server.enabled is True
+    assert server.url == "http://127.0.0.1:9991/mcp"
+
+
+def test_existing_config_migrates_java_mcp_without_losing_custom_servers(tmp_path) -> None:
+    custom = McpServerConfig(
+        id="custom-tools",
+        name="Custom tools",
+        transport="stdio",
+        command="python",
+        args=["server.py"],
+    )
+    path = tmp_path / "config.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE app_config (id INTEGER PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO app_config (id, payload, updated_at) VALUES (1, ?, CURRENT_TIMESTAMP)",
+            (json.dumps(AppConfig(mcp_servers=[custom]).model_dump(mode="json")),),
+        )
+    store = ConfigStore(path)
+
+    loaded = store.load()
+
+    assert [server.id for server in loaded.mcp_servers] == ["custom-tools", DEFAULT_JAVA_MCP_SERVER_ID]
+    assert loaded.mcp_servers[0] == custom
+    assert loaded.mcp_servers[1] == default_java_mcp_server()
+
+
+def test_untouched_legacy_model_defaults_migrate_to_builtin_provider(tmp_path) -> None:
+    path = tmp_path / "config.db"
+    legacy = AppConfig(
+        model=ModelConfig(
+            base_url=LEGACY_MODEL_BASE_URL,
+            model=LEGACY_MODEL_NAME,
+            api_key="",
+        )
+    )
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE app_config (id INTEGER PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO app_config (id, payload, updated_at) VALUES (1, ?, CURRENT_TIMESTAMP)",
+            (json.dumps(legacy.model_dump(mode="json")),),
+        )
+
+    loaded = ConfigStore(path).load()
+
+    assert loaded.model.base_url == DEFAULT_MODEL_BASE_URL
+    assert loaded.model.model == DEFAULT_MODEL_NAME
+    assert loaded.model.api_key == DEFAULT_MODEL_API_KEY
+
+
+def test_java_mcp_url_uses_saved_port(tmp_path) -> None:
+    store = ConfigStore(tmp_path / "config.db")
+    saved = default_java_mcp_server(port=12345)
+    store.save(AppConfig(mcp_servers=[saved]))
+
+    loaded = store.load()
+
+    assert len([server for server in loaded.mcp_servers if server.id == DEFAULT_JAVA_MCP_SERVER_ID]) == 1
+    assert loaded.mcp_servers[0].url == "http://127.0.0.1:12345/mcp"
+    assert DEFAULT_JAVA_MCP_PORT == 9991
+
+
+def test_legacy_running_mcp_alias_migrates_to_the_single_builtin_java_server(tmp_path) -> None:
+    legacy = McpServerConfig(
+        id="running-http",
+        name="Running MCP",
+        transport="http",
+        url="http://127.0.0.1:9991/mcp",
+    )
+    path = tmp_path / "config.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE app_config (id INTEGER PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO app_config (id, payload, updated_at) VALUES (1, ?, CURRENT_TIMESTAMP)",
+            (json.dumps(AppConfig(mcp_servers=[legacy]).model_dump(mode="json")),),
+        )
+
+    loaded = ConfigStore(path).load()
+
+    assert loaded.mcp_servers == [default_java_mcp_server()]
+
+
+def test_custom_http_server_at_java_url_is_preserved_when_it_is_not_the_legacy_alias(tmp_path) -> None:
+    custom = McpServerConfig(
+        id="custom-java-url",
+        name="Custom Java URL",
+        transport="http",
+        url="http://127.0.0.1:9991/mcp",
+        headers={"X-Profile": "custom"},
+    )
+    store = ConfigStore(tmp_path / "config.db")
+    store.save(AppConfig(mcp_servers=[custom]))
+
+    loaded = store.load()
+
+    assert [server.id for server in loaded.mcp_servers] == ["custom-java-url", DEFAULT_JAVA_MCP_SERVER_ID]
+
+
+def test_existing_java_port_wins_when_the_legacy_alias_precedes_it(tmp_path) -> None:
+    legacy = McpServerConfig(
+        id="running-http",
+        name="Running MCP",
+        transport="http",
+        url="http://127.0.0.1:9991/mcp",
+    )
+    configured_java = default_java_mcp_server(port=12345)
+    store = ConfigStore(tmp_path / "config.db")
+    store.save(AppConfig(mcp_servers=[legacy, configured_java]))
+
+    loaded = store.load()
+
+    assert loaded.mcp_servers == [configured_java]
 
 
 def test_model_config_rejects_invalid_url_and_blank_model() -> None:
@@ -120,6 +275,26 @@ def test_config_store_round_trips_conversation_history(tmp_path) -> None:
 
     assert store.load_conversation("conversation-1") == history
     assert store.load_conversation("conversation-2") == []
+
+
+def test_config_store_deletes_one_conversation_without_touching_app_config(tmp_path) -> None:
+    path = tmp_path / "config.db"
+    store = ConfigStore(path)
+    store.save(AppConfig(model=ModelConfig(api_key="keep-me")))
+    store.save_conversation(
+        "conversation-1",
+        [{"role": "user", "content": "要删除的问题"}, {"role": "assistant", "content": "回答"}],
+    )
+    store.save_conversation(
+        "conversation-2",
+        [{"role": "user", "content": "要保留的问题"}, {"role": "assistant", "content": "回答"}],
+    )
+
+    assert store.delete_conversation("conversation-1") is True
+    assert store.delete_conversation("conversation-1") is False
+    assert store.load_conversation("conversation-1") == []
+    assert store.load_conversation("conversation-2")
+    assert store.load().model.api_key == "keep-me"
 
 
 def test_config_store_rejects_stale_conversation_version(tmp_path) -> None:

@@ -91,4 +91,18 @@ describe("startup MCP connection", () => {
     });
     expect(results.disabled).toBeUndefined();
   });
+
+  it("can retry startup connections while a bundled server is becoming ready", async () => {
+    const server = { id: "starting", name: "Starting", enabled: true } as McpServerConfig;
+    let attempts = 0;
+
+    const results = await autoConnectMcpServers([server], async () => {
+      attempts += 1;
+      if (attempts < 3) throw new Error("server is still starting");
+      return { server_id: server.id, tools: [] };
+    }, { attempts: 3, delayMs: 0 });
+
+    expect(attempts).toBe(3);
+    expect(results.starting.status).toBe("success");
+  });
 });

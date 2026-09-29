@@ -35,7 +35,7 @@ def test_build_chat_model_uses_configured_openai_compatible_values() -> None:
 
 def test_build_chat_model_rejects_missing_key() -> None:
     with pytest.raises(AgentConfigurationError, match="API key"):
-        build_chat_model(ModelConfig())
+        build_chat_model(ModelConfig(api_key=""))
 
 
 @pytest.mark.asyncio
@@ -97,6 +97,7 @@ async def test_run_agent_passes_default_prompt_on_every_request(monkeypatch) -> 
     config = AppConfig(
         model=ModelConfig(api_key="test-key"),
         default_prompt="Always answer in Chinese.",
+        mcp_servers=[],
     )
 
     result = await run_agent(config, [{"role": "user", "content": "hello"}])
@@ -104,6 +105,33 @@ async def test_run_agent_passes_default_prompt_on_every_request(monkeypatch) -> 
     assert result.content == "ready"
     assert captured["system_prompt"] == "Always answer in Chinese."
     assert captured["payload"] == {"messages": [{"role": "user", "content": "hello"}]}
+
+
+@pytest.mark.asyncio
+async def test_run_agent_does_not_add_system_prompt_when_default_prompt_is_empty(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeAgent:
+        async def ainvoke(self, payload):
+            captured["payload"] = payload
+            return {"messages": [{"role": "assistant", "content": "ready"}]}
+
+    def fake_create_agent(**kwargs):
+        captured["kwargs"] = kwargs
+        return FakeAgent()
+
+    monkeypatch.setattr(agent_module, "create_agent", fake_create_agent)
+    config = AppConfig(
+        model=ModelConfig(api_key="test-key"),
+        default_prompt="",
+        mcp_servers=[],
+    )
+
+    result = await run_agent(config, [{"role": "user", "content": "你好"}])
+
+    assert result.content == "ready"
+    assert "system_prompt" not in captured["kwargs"]
+    assert captured["payload"] == {"messages": [{"role": "user", "content": "你好"}]}
 
 
 def test_extract_final_text_supports_text_blocks() -> None:
@@ -137,6 +165,7 @@ async def test_stream_agent_emits_reasoning_and_answer_deltas(monkeypatch) -> No
     config = AppConfig(
         model=ModelConfig(api_key="test-key"),
         default_prompt="Answer in Chinese.",
+        mcp_servers=[],
     )
 
     events = [event async for event in agent_module.stream_agent(config, [{"role": "user", "content": "hello"}])]
@@ -164,7 +193,7 @@ async def test_stream_agent_retries_timeout_with_a_fresh_agent(monkeypatch) -> N
 
     monkeypatch.setattr(agent_module, "create_agent", lambda **kwargs: FakeAgent())
     monkeypatch.setattr(agent_module, "_retry_delay", lambda attempt: 0)
-    config = AppConfig(model=ModelConfig(api_key="test-key", retry_count=1))
+    config = AppConfig(model=ModelConfig(api_key="test-key", retry_count=1), mcp_servers=[])
 
     events = [event async for event in agent_module.stream_agent(config, [{"role": "user", "content": "hello"}])]
 
@@ -188,7 +217,10 @@ async def test_run_agent_enforces_configured_timeout_and_retry_budget(monkeypatc
 
     monkeypatch.setattr(agent_module, "create_agent", lambda **kwargs: FakeAgent())
     monkeypatch.setattr(agent_module, "_retry_delay", lambda attempt: 0)
-    config = AppConfig(model=ModelConfig(api_key="test-key", timeout=1, retry_count=1))
+    config = AppConfig(
+        model=ModelConfig(api_key="test-key", timeout=1, retry_count=1),
+        mcp_servers=[],
+    )
 
     result = await run_agent(config, [{"role": "user", "content": "hello"}])
 

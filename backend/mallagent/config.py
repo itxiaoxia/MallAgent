@@ -10,7 +10,13 @@ from typing import Any
 from platformdirs import user_config_path
 from pydantic import ValidationError
 
-from .models import AppConfig
+from .models import (
+    DEFAULT_MODEL_API_KEY,
+    AppConfig,
+    ModelConfig,
+    ensure_builtin_model,
+    ensure_default_java_mcp,
+)
 
 
 class ConfigStoreError(RuntimeError):
@@ -76,7 +82,7 @@ class ConfigStore:
             return None
         try:
             raw = json.loads(self.legacy_path.read_text(encoding="utf-8"))
-            config = AppConfig.model_validate(raw)
+            config = ensure_default_java_mcp(ensure_builtin_model(AppConfig.model_validate(raw)))
             self.save(config)
             return config
         except (OSError, json.JSONDecodeError, ValidationError, sqlite3.Error) as exc:
@@ -94,15 +100,22 @@ class ConfigStore:
                     "SELECT payload FROM app_config WHERE id = 1"
                 ).fetchone()
             if row is None:
-                return AppConfig()
-            return AppConfig.model_validate(json.loads(row[0]))
+                config = AppConfig(model=ModelConfig(api_key=DEFAULT_MODEL_API_KEY))
+                self.save(config)
+                return config
+            stored = AppConfig.model_validate(json.loads(row[0]))
+            config = ensure_default_java_mcp(ensure_builtin_model(stored))
+            if config != stored:
+                self.save(config)
+            return config
         except (OSError, sqlite3.Error, json.JSONDecodeError, ValidationError) as exc:
             raise ConfigStoreError(f"Unable to load configuration from {self.path}") from exc
 
     def save(self, config: AppConfig) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            payload = json.dumps(config.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":"))
+            normalized = ensure_default_java_mcp(config)
+            payload = json.dumps(normalized.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":"))
             with sqlite3.connect(self.path) as connection:
                 self._create_schema(connection)
                 connection.execute(
@@ -175,6 +188,19 @@ class ConfigStore:
             raise
         except (OSError, sqlite3.Error, json.JSONDecodeError, TypeError, ValueError) as exc:
             raise ConfigStoreError(f"Unable to list conversations from {self.path}") from exc
+
+    def delete_conversation(self, conversation_id: str) -> bool:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(self.path) as connection:
+                self._create_schema(connection)
+                cursor = connection.execute(
+                    "DELETE FROM conversations WHERE id = ?",
+                    (conversation_id,),
+                )
+            return cursor.rowcount > 0
+        except (OSError, sqlite3.Error) as exc:
+            raise ConfigStoreError(f"Unable to delete conversation from {self.path}") from exc
 
     def load_conversation_snapshot(self, conversation_id: str) -> ConversationSnapshot:
         try:

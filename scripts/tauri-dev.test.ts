@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   ensureDevResourceDirectory,
   getDevPaths,
+  getTauriDevInvocation,
   getTauriBindingPackage,
 } from "./tauri-dev.mjs";
 
@@ -49,5 +50,14 @@ describe("Tauri development bootstrap", () => {
     const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 
     expect(packageJson.scripts["tauri:dev"]).toBe("node scripts/tauri-dev.mjs");
+  });
+
+  it("hides the Windows Tauri dev process and avoids a second shell", () => {
+    expect(getTauriDevInvocation("win32", { ComSpec: "C:/Windows/System32/cmd.exe" })).toEqual({
+      program: "C:/Windows/System32/cmd.exe",
+      args: ["/d", "/s", "/c", "npm.cmd run tauri -- dev"],
+      windowsHide: true,
+      windowsVerbatimArguments: true,
+    });
   });
 });

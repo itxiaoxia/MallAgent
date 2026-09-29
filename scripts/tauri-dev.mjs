@@ -48,7 +48,7 @@ export function getDevPaths(platform = process.platform, root = process.cwd()) {
 }
 
 export function ensureDevResourceDirectory(root = process.cwd(), platform = process.platform) {
-  const resourceDirectory = getDevPaths(platform, root).resourceDirectory;
+  const resourceDirectory = path.normalize(getDevPaths(platform, root).resourceDirectory);
   fs.mkdirSync(resourceDirectory, { recursive: true });
   return resourceDirectory;
 }
@@ -79,7 +79,7 @@ function runCommand(program, args, options = {}) {
     encoding: "utf8",
     shell: options.shell || false,
     stdio: options.stdio || "inherit",
-    windowsHide: false,
+    windowsHide: true,
   });
   if (result.error) {
     throw new Error(`Failed to run ${commandDescription(program, args)}: ${result.error.message}`);
@@ -105,7 +105,7 @@ function checkPythonVersion(python, root) {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: false,
+      windowsHide: true,
     },
   );
   if (result.error) {
@@ -142,7 +142,7 @@ function backendDependenciesAreInstalled(python, root) {
     cwd: root,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: false,
+    windowsHide: true,
   });
   if (result.error) {
     throw new Error(`Could not inspect MallAgent backend dependencies: ${result.error.message}`);
@@ -198,14 +198,32 @@ function assertTauriCliDependencies(root, platform, arch) {
   }
 }
 
+export function getTauriDevInvocation(platform = process.platform, env = process.env) {
+  if (platform === "win32") {
+    return {
+      program: env.ComSpec || env.COMSPEC || "cmd.exe",
+      args: ["/d", "/s", "/c", "npm.cmd run tauri -- dev"],
+      windowsHide: true,
+      windowsVerbatimArguments: true,
+    };
+  }
+
+  return {
+    program: "npm",
+    args: ["run", "tauri", "--", "dev"],
+    windowsHide: false,
+    windowsVerbatimArguments: false,
+  };
+}
+
 function runTauriDev(root, platform, env) {
-  const npmCommand = platform === "win32" ? "npm.cmd" : "npm";
-  const result = spawnSync(npmCommand, ["run", "tauri", "--", "dev"], {
+  const invocation = getTauriDevInvocation(platform, env);
+  const result = spawnSync(invocation.program, invocation.args, {
     cwd: root,
     env,
     stdio: "inherit",
-    windowsHide: false,
-    shell: platform === "win32",
+    windowsHide: invocation.windowsHide,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   });
   if (result.error) throw result.error;
   return result.status ?? 1;

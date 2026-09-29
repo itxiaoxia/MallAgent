@@ -4,7 +4,17 @@ import pytest
 
 from mallagent import mcp as mcp_module
 from mallagent.mcp import build_mcp_config
-from mallagent.models import McpServerConfig
+from mallagent.models import McpServerConfig, default_java_mcp_server
+
+
+def test_build_mcp_config_keeps_default_java_mcp_http_contract() -> None:
+    assert build_mcp_config([default_java_mcp_server()]) == {
+        "mcpServers": {
+            "mall-system-java": {
+                "url": "http://127.0.0.1:9991/mcp",
+            },
+        },
+    }
 
 
 def test_build_mcp_config_maps_enabled_stdio_and_http_servers() -> None:

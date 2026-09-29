@@ -207,6 +207,29 @@ def test_list_conversations_returns_titles_and_ids(tmp_path) -> None:
     assert response.json()["conversations"][0]["updated_at"]
 
 
+def test_delete_conversation_removes_only_the_requested_history(tmp_path) -> None:
+    store = _store(tmp_path, api_key="secret")
+    store.save_conversation(
+        "conversation-1",
+        [{"role": "user", "content": "要删除的问题"}, {"role": "assistant", "content": "回答"}],
+    )
+    store.save_conversation(
+        "conversation-2",
+        [{"role": "user", "content": "要保留的问题"}, {"role": "assistant", "content": "回答"}],
+    )
+    client = TestClient(create_app(store=store))
+
+    response = client.delete("/api/conversations/conversation-1")
+
+    assert response.status_code == 200
+    assert response.json() == {"conversation_id": "conversation-1", "deleted": True}
+    assert client.get("/api/conversations/conversation-1").json()["messages"] == []
+    assert [item["conversation_id"] for item in client.get("/api/conversations").json()["conversations"]] == [
+        "conversation-2"
+    ]
+    assert store.load().model.api_key == "secret"
+
+
 def test_chat_rejects_stale_full_history_instead_of_overwriting_newer_context(tmp_path) -> None:
     store = _store(tmp_path, api_key="secret")
     store.save_conversation(

@@ -13,6 +13,12 @@ import type {
 } from "./types";
 
 const DEV_BACKEND_URL = "http://127.0.0.1:45831";
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const MCP_REQUEST_TIMEOUT_MS = 15_000;
+
+export interface ApiClientOptions {
+  requestTimeoutMs?: number;
+}
 
 type BackendInvoker = () => Promise<string>;
 
@@ -119,15 +125,39 @@ export function parseSseBlock(block: string): ChatStreamEvent | null {
   }
 }
 
-export function createApiClient(baseUrl: string) {
+export function createApiClient(baseUrl: string, options: ApiClientOptions = {}) {
   const root = baseUrl.replace(/\/$/, "");
+  const requestTimeoutMs = Math.max(1, Math.floor(options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS));
 
-  async function request<T>(path: string, init?: RequestInit) {
-    const response = await fetch(`${root}${path}`, {
-      ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-    });
-    return parseResponse<T>(response);
+  async function request<T>(path: string, init?: RequestInit, timeoutMs = requestTimeoutMs) {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, Math.max(1, timeoutMs));
+    const callerSignal = init?.signal;
+    const abortFromCaller = () => controller.abort();
+    if (callerSignal) {
+      if (callerSignal.aborted) controller.abort();
+      else callerSignal.addEventListener("abort", abortFromCaller, { once: true });
+    }
+    try {
+      const response = await fetch(`${root}${path}`, {
+        ...init,
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+      });
+      return await parseResponse<T>(response);
+    } catch (error) {
+      if (timedOut) {
+        throw new ApiError("本地服务请求超时，请检查 Java/MCP 服务是否已启动。", 504);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", abortFromCaller);
+    }
   }
 
   return {
@@ -136,6 +166,10 @@ export function createApiClient(baseUrl: string) {
     getConversations: () => request<ConversationListResponse>("/api/conversations"),
     getConversation: (conversationId: string) =>
       request<ConversationResponse>(`/api/conversations/${encodeURIComponent(conversationId)}`),
+    deleteConversation: (conversationId: string) =>
+      request<{ conversation_id: string; deleted: boolean }>(`/api/conversations/${encodeURIComponent(conversationId)}`, {
+        method: "DELETE",
+      }),
     saveConfig: async (config: AppConfig, apiKey: string, clearApiKey = false) => {
       const payload = await request<AppConfig>("/api/config", {
         method: "PUT",
@@ -204,6 +238,6 @@ export function createApiClient(baseUrl: string) {
       request<McpTestResponse>("/api/mcp/test", {
         method: "POST",
         body: JSON.stringify(server),
-      }),
+      }, Math.min(requestTimeoutMs, MCP_REQUEST_TIMEOUT_MS)),
   };
 }

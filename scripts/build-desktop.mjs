@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { buildJavaArtifacts, verifyPackagedJavaServer } from "./java-build.mjs";
 
 const SUPPORTED_PLATFORMS = new Set(["win32", "darwin"]);
 
@@ -12,23 +13,74 @@ function portablePath(...parts) {
   return path.join(...parts).replaceAll(path.sep, "/");
 }
 
-export function getPlatformConfig(platform = process.platform, root = process.cwd()) {
+function platformId(platform) {
   if (!SUPPORTED_PLATFORMS.has(platform)) {
     throw new Error("Desktop packaging is supported only on Windows or macOS.");
   }
+  return platform === "win32" ? "windows" : "macos";
+}
 
+function readPackageVersion(root) {
+  const packageJsonPath = nativePath(portablePath(root, "package.json"));
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+  if (!packageJson.version) throw new Error(`package.json has no version: ${portablePath(root, "package.json")}.`);
+  return String(packageJson.version);
+}
+
+function buildTimestamp(now) {
+  const date = now instanceof Date ? now : new Date(now);
+  if (Number.isNaN(date.getTime())) throw new Error("Invalid build timestamp.");
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}-${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}`;
+}
+
+export function createBuildId(root, platform = process.platform, options = {}) {
+  const id = platformId(platform);
+  const version = String(options.version || readPackageVersion(root)).replace(/[^0-9A-Za-z.-]+/g, "-");
+  const timestamp = buildTimestamp(options.now || new Date());
+  const exists = options.exists || fs.existsSync;
+  const baseId = `v${version}-${timestamp}`;
+  let attempt = 1;
+  while (true) {
+    const suffix = attempt === 1 ? "" : `-${attempt}`;
+    const buildId = `${baseId}${suffix}`;
+    const outputDirectory = portablePath(root, `MallAgent-${id}-${buildId}`);
+    const cargoTargetDirectory = portablePath(root, "src-tauri", "target", `build-${id}-${buildId}`);
+    if (!exists(outputDirectory) && !exists(cargoTargetDirectory)) return buildId;
+    attempt += 1;
+  }
+}
+
+export function getPlatformConfig(platform = process.platform, root = process.cwd(), options = {}) {
+  const id = platformId(platform);
+  const buildId = options.buildId;
   const windows = platform === "win32";
   const backendFilename = windows ? "mallagent-backend.exe" : "mallagent-backend";
+  const outputDirectory = portablePath(root, buildId ? `MallAgent-${id}-${buildId}` : windows ? "MallAgent-windows" : "MallAgent-macos");
+  const cargoTargetDirectory = portablePath(
+    options.cargoTargetDirectory
+      || (buildId ? portablePath(root, "src-tauri", "target", `build-${id}-${buildId}`) : portablePath(root, "src-tauri", "target")),
+  );
+  const releaseDirectory = portablePath(cargoTargetDirectory, "release");
   return {
-    id: windows ? "windows" : "macos",
+    id,
     platform,
+    buildId,
     backendFilename,
+    outputDirectory,
+    cargoTargetDirectory,
+    releaseDirectory,
     tauriArgs: windows ? ["build", "--no-bundle"] : ["build", "--bundles", "app"],
     backendResourcePath: portablePath(root, "src-tauri", "resources", "backend", backendFilename),
     backendResourceDirectoryPath: portablePath(root, "src-tauri", "resources", "backend"),
-    tauriBinaryPath: portablePath(root, "src-tauri", "target", "release", windows ? "mallagent.exe" : "mallagent"),
-    portableExecutablePath: windows ? portablePath(root, "release", "windows", "MallAgent.exe") : undefined,
-    appPath: windows ? undefined : portablePath(root, "release", "macos", "MallAgent.app"),
+    javaJarResourcePath: portablePath(root, "src-tauri", "resources", "java", "mall-system.jar"),
+    javaRuntimeResourcePath: portablePath(root, "src-tauri", "resources", "java-runtime"),
+    tauriBinaryPath: portablePath(releaseDirectory, windows ? "mallagent.exe" : "mallagent"),
+    portableExecutablePath: windows ? portablePath(outputDirectory, "MallAgent.exe") : undefined,
+    backendStagingPath: windows ? portablePath(outputDirectory, "backend", backendFilename) : undefined,
+    javaJarStagingPath: windows ? portablePath(outputDirectory, "java", "mall-system.jar") : undefined,
+    javaRuntimeStagingPath: windows ? portablePath(outputDirectory, "java-runtime") : undefined,
+    appPath: windows ? undefined : portablePath(outputDirectory, "MallAgent.app"),
   };
 }
 
@@ -68,7 +120,7 @@ export function buildBackendCommand(root, target, python) {
       "--noconfirm",
       "--clean",
       "--onefile",
-      "--console",
+      "--noconsole",
       "--name",
       "mallagent-backend",
       "--distpath",
@@ -143,6 +195,12 @@ function assertWritableOutput(outputPath) {
     throw error;
   } finally {
     if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
+export function assertFreshOutputDirectory(outputPath, exists = fs.existsSync) {
+  if (exists(nativePath(outputPath))) {
+    throw new Error(`Refusing to overwrite existing package output: ${outputPath}. Each build must use a new versioned output directory.`);
   }
 }
 
@@ -324,18 +382,25 @@ export async function verifyPackagedBackend(root, target, python) {
   }
 }
 
-function runNpmCommand(root, platform, args) {
+function runNpmCommand(root, platform, args, env) {
   if (platform === "win32") {
     const command = ["npm.cmd", ...args].join(" ");
-    runCommand(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", command], { cwd: root });
+    runCommand(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", command], { cwd: root, env });
     return;
   }
-  runCommand("npm", args, { cwd: root });
+  runCommand("npm", args, { cwd: root, env });
+}
+
+export function getTauriBuildEnvironment(target, baseEnv = process.env) {
+  return {
+    ...baseEnv,
+    CARGO_TARGET_DIR: target.cargoTargetDirectory,
+  };
 }
 
 function runTauriBuild(root, target) {
   runNpmCommand(root, target.platform, ["run", "build"]);
-  runNpmCommand(root, target.platform, ["run", "tauri", "--", ...target.tauriArgs]);
+  runNpmCommand(root, target.platform, ["run", "tauri", "--", ...target.tauriArgs], getTauriBuildEnvironment(target));
 }
 
 function copyFile(source, destination) {
@@ -350,32 +415,76 @@ function copyFile(source, destination) {
   }
 }
 
-function stageWindows(root, target) {
+function copyDirectory(source, destination) {
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  try {
+    fs.cpSync(source, destination, { recursive: true, force: true });
+  } catch (error) {
+    if (["EACCES", "EBUSY", "EPERM"].includes(error?.code)) {
+      throw new Error(lockedOutputError(destination));
+    }
+    throw error;
+  }
+}
+
+function stageWindows(target) {
   const sourceBinary = nativePath(target.tauriBinaryPath);
   const stagedBinary = nativePath(target.portableExecutablePath);
   if (!fs.existsSync(sourceBinary)) throw new Error(`Tauri did not produce ${target.tauriBinaryPath}.`);
+  if (!fs.existsSync(nativePath(target.backendResourcePath))) {
+    throw new Error(`Packaged backend is missing: ${target.backendResourcePath}.`);
+  }
+  if (!fs.existsSync(nativePath(target.javaJarResourcePath))) {
+    throw new Error(`Java MCP JAR is missing: ${target.javaJarResourcePath}.`);
+  }
+  if (!fs.existsSync(nativePath(target.javaRuntimeResourcePath))) {
+    throw new Error(`Java runtime is missing: ${target.javaRuntimeResourcePath}.`);
+  }
+  assertFreshOutputDirectory(target.outputDirectory);
+  fs.mkdirSync(nativePath(target.outputDirectory));
   copyFile(sourceBinary, stagedBinary);
-  copyFile(nativePath(target.backendResourcePath), nativePath(path.join(root, "release", "windows", "backend", target.backendFilename)));
+  copyFile(nativePath(target.backendResourcePath), nativePath(target.backendStagingPath));
+  copyFile(nativePath(target.javaJarResourcePath), nativePath(target.javaJarStagingPath));
+  copyDirectory(nativePath(target.javaRuntimeResourcePath), nativePath(target.javaRuntimeStagingPath));
 }
 
 function stageMacos(root, target) {
-  const sourceApp = nativePath(path.join(root, "src-tauri", "target", "release", "bundle", "macos", "MallAgent.app"));
-  if (!fs.existsSync(sourceApp)) throw new Error(`Tauri did not produce ${portablePath(root, "src-tauri", "target", "release", "bundle", "macos", "MallAgent.app")}.`);
-  fs.mkdirSync(path.dirname(nativePath(target.appPath)), { recursive: true });
+  const sourceApp = nativePath(portablePath(target.releaseDirectory, "bundle", "macos", "MallAgent.app"));
+  if (!fs.existsSync(sourceApp)) throw new Error(`Tauri did not produce ${portablePath(target.releaseDirectory, "bundle", "macos", "MallAgent.app")}.`);
+  assertFreshOutputDirectory(target.outputDirectory);
+  fs.mkdirSync(nativePath(target.outputDirectory));
   fs.cpSync(sourceApp, nativePath(target.appPath), { recursive: true, force: true });
 }
 
+async function cleanupBuildTarget(target) {
+  if (!target.buildId) return;
+  try {
+    await removeTemporaryDirectory(nativePath(target.cargoTargetDirectory));
+  } catch (error) {
+    console.warn(`Could not remove temporary Cargo target ${target.cargoTargetDirectory}; leaving it in place: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
 export async function main(argv = process.argv.slice(2), platform = process.platform, root = process.cwd()) {
-  const target = getPlatformConfig(platform, root);
+  const backendOnly = argv.includes("--backend-only");
+  const buildId = backendOnly ? undefined : createBuildId(root, platform);
+  const target = getPlatformConfig(platform, root, { buildId });
   const python = resolvePythonInvocation(root, platform);
   validatePython311(python, root);
-  const backendOnly = argv.includes("--backend-only");
+  const javaArtifacts = buildJavaArtifacts({ root, platform });
+  await verifyPackagedJavaServer(javaArtifacts);
   buildBackend(root, target, python);
   await verifyPackagedBackend(root, target, python);
   if (backendOnly) return;
-  runTauriBuild(root, target);
-  if (target.id === "windows") stageWindows(root, target);
-  else stageMacos(root, target);
+  try {
+    console.log(`Building ${target.id} package ${target.buildId} into ${target.outputDirectory}.`);
+    runTauriBuild(root, target);
+    if (target.id === "windows") stageWindows(target);
+    else stageMacos(root, target);
+    console.log(`Package created at ${target.outputDirectory}.`);
+  } finally {
+    await cleanupBuildTarget(target);
+  }
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";

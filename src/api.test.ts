@@ -132,6 +132,48 @@ describe("model connection test", () => {
   });
 });
 
+describe("bounded local requests", () => {
+  it("aborts a hanging MCP request within the configured timeout", async () => {
+    vi.useFakeTimers();
+    let rejectFetch: ((reason?: unknown) => void) | undefined;
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_, reject) => {
+        rejectFetch = reject;
+        requestSignal = init?.signal ?? undefined;
+        requestSignal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+      })),
+    );
+
+    const request = createApiClient("http://127.0.0.1:45831", { requestTimeoutMs: 10 }).testMcp({
+      id: "java",
+      name: "Java",
+      transport: "http",
+      command: "",
+      args: [],
+      env: {},
+      url: "http://127.0.0.1:9991/mcp",
+      headers: {},
+      enabled: true,
+    });
+    let settled = false;
+    void request.then(
+      () => { settled = true; },
+      () => { settled = true; },
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(settled).toBe(true);
+    await expect(request).rejects.toMatchObject({ status: 504 });
+    expect(requestSignal?.aborted).toBe(true);
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    rejectFetch = undefined;
+  });
+});
+
 describe("SSE stream parsing", () => {
   it("parses typed JSON events without losing unicode text", () => {
     expect(parseSseBlock('event: content_delta\ndata: {"type":"content_delta","content":"你好"}')).toEqual({
@@ -234,6 +276,31 @@ describe("SSE stream parsing", () => {
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
       "http://127.0.0.1:45831/api/conversations",
       expect.objectContaining({ headers: { "Content-Type": "application/json" } }),
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it("deletes one persisted conversation by id", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ conversation_id: "conversation-1", deleted: true }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    await expect(createApiClient("http://127.0.0.1:45831").deleteConversation("conversation-1")).resolves.toEqual({
+      conversation_id: "conversation-1",
+      deleted: true,
+    });
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      "http://127.0.0.1:45831/api/conversations/conversation-1",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+      }),
     );
     vi.unstubAllGlobals();
   });

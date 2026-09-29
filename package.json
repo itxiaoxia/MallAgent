@@ -9,11 +9,13 @@
     "preview": "vite preview",
     "test": "vitest run",
     "tauri": "tauri",
+    "dev:desktop": "node scripts/dev-desktop.mjs",
+    "build:java": "node scripts/java-build.mjs",
     "tauri:dev": "node scripts/tauri-dev.mjs",
     "tauri:build": "node scripts/build-desktop.mjs",
     "build:backend": "node scripts/build-desktop.mjs --backend-only",
-    "build:windows": "scripts\\build.bat",
-    "build:macos": "sh ./scripts/build.sh"
+    "build:windows": "build.bat",
+    "build:macos": "sh ./build.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

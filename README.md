@@ -23,15 +23,15 @@ npm run tauri:dev
 macOS：
 
 ```bash
-sh scripts/build.sh
+sh build.sh
 ```
 
-产物：`release/macos/MallAgent.app`
+产物：根目录下带版本和时间后缀的 `MallAgent-macos-v<version>-<timestamp>/MallAgent.app`。每次打包都会生成新目录，不覆盖旧版本。
 
 Windows：
 
 ```bat
-scripts\build.bat
+build.bat
 ```
 
-产物：`release/windows/MallAgent.exe`
+产物：根目录下带版本和时间后缀的 `MallAgent-windows-v<version>-<timestamp>/MallAgent.exe`，运行所需的 `backend/`、`java/` 和 `java-runtime/` 也会放在同一目录下。每次打包都会生成新目录，不覆盖旧版本。

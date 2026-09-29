@@ -196,6 +196,16 @@ def create_app(
         except ConfigStoreError as exc:
             raise HTTPException(status_code=500, detail="Stored conversation could not be loaded") from exc
 
+    @app.delete("/api/conversations/{conversation_id}")
+    async def delete_conversation(conversation_id: str) -> dict:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", conversation_id):
+            raise HTTPException(status_code=400, detail="Invalid conversation id")
+        try:
+            deleted = config_store.delete_conversation(conversation_id)
+            return {"conversation_id": conversation_id, "deleted": deleted}
+        except ConfigStoreError as exc:
+            raise HTTPException(status_code=500, detail="Stored conversation could not be deleted") from exc
+
     @app.post("/api/chat")
     async def chat(request: ChatRequest) -> dict:
         try:
