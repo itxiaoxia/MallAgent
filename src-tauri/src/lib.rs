@@ -829,9 +829,10 @@ mod tests {
         )
         .expect("valid Java command spec");
 
-        assert!(spec
-            .program
-            .ends_with("project/src-tauri/resources/java-runtime/bin/javaw.exe"));
+        let java_executable = if cfg!(windows) { "javaw.exe" } else { "java" };
+        assert!(spec.program.ends_with(
+            Path::new("project/src-tauri/resources/java-runtime/bin").join(java_executable)
+        ));
         assert_eq!(spec.args[0], "-jar");
         assert_eq!(spec.args[1], "java/mall-system.jar");
         assert!(spec
@@ -868,9 +869,10 @@ mod tests {
         )
         .expect("valid Java command spec");
 
+        let java_executable = if cfg!(windows) { "javaw.exe" } else { "java" };
         assert!(spec
             .program
-            .ends_with("resources/java-runtime/bin/javaw.exe"));
+            .ends_with(Path::new("resources/java-runtime/bin").join(java_executable)));
         assert_eq!(spec.args[1], "java/mall-system.jar");
         assert_eq!(spec.current_dir, Path::new("C:/resources"));
     }

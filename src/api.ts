@@ -38,7 +38,7 @@ export async function resolveBackendUrl(invoker: BackendInvoker = () => invoke<s
 
 export async function waitForBackend(
   health: () => Promise<HealthResponse>,
-  { attempts = 30, delayMs = 200 }: BackendWaitOptions = {},
+  { attempts = 120, delayMs = 500 }: BackendWaitOptions = {},
 ): Promise<HealthResponse> {
   const maxAttempts = Math.max(1, Math.floor(attempts));
   let lastError: unknown;

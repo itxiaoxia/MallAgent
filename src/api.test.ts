@@ -60,6 +60,26 @@ describe("backend readiness", () => {
     await expect(waitForBackend(health, { attempts: 2, delayMs: 0 })).rejects.toThrow("backend unavailable");
     expect(health).toHaveBeenCalledTimes(2);
   });
+
+  it("waits through the packaged backend cold-start window by default", async () => {
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      const health = vi.fn(async () => {
+        attempts += 1;
+        if (attempts < 31) throw new Error("backend is still extracting");
+        return { status: "ok", version: "0.1.0" };
+      });
+
+      const result = waitForBackend(health);
+      await vi.runAllTimersAsync();
+
+      await expect(result).resolves.toEqual({ status: "ok", version: "0.1.0" });
+      expect(health).toHaveBeenCalledTimes(31);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("configuration payloads", () => {
